@@ -1,6 +1,6 @@
-# Kilosort2.5: automated spike sorting with drift correction and template matching on GPUs #
+# Kilosort_ultra: automated spike sorting with drift correction and template matching on GPUs, customized for ultra-high density probes #
 
-*updated from Kilosort2 on Oct 28, 2020. The repository name has changed to just "Kilosort", and we'll keep track of versions via Github releases.* 
+*updated from Kilosort2.5 with custom modifications for improved drift tracking with high density, small array probes.* 
 
 ![](https://github.com/MouseLand/Kilosort/blob/main/Docs/img/templates.png)
 
