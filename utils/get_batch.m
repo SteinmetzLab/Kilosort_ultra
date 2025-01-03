@@ -8,8 +8,7 @@ offset = 2 * ops.Nchan*batchstart(ibatch); % binary file offset in bytes
 
 fid = fopen(ops.fproc, 'r');
 fseek(fid, offset, 'bof');
-dat = fread(fid, [ops.Nchan NT+ops.ntbuff], '*int16');
-dat = dat';
+dat = fread(fid, [NT ops.Nchan], '*int16');
 fclose(fid);
 
 % move data to GPU and scale it

@@ -4,7 +4,6 @@
 
     enableStableMode = true;
     
-    mexcuda -largeArrayDims spikedetector3.cu
     mexcuda -largeArrayDims mexThSpkPC.cu
     mexcuda -largeArrayDims mexGetSpikes2.cu
     

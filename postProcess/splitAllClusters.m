@@ -6,14 +6,21 @@ function [rez, X] = splitAllClusters(rez, flag)
 % bimodality threshold, then the cluster is split along that direction
 % it only uses the PC features for each spike, stored in rez.cProjPC
 
+% applies only to this function. For large templates (256 channels) the 
+% GPU matrix operations can beocme long enough that they will exceed a
+% system timeout when the GPU card is used for both video and computation.
+% Can safely set to 1 if you are using a separate GPU card for compuation
+% and gpu.KernelExecutionTimeout = 0.
+useGPU = 0;    
+
 ops = rez.ops;
 
 wPCA = gather(ops.wPCA); % use PCA projections to reconstruct templates when we do splits
 
 ccsplit = rez.ops.AUCsplit; % this is the threshold for splits, and is one of the main parameters users can change
 
-NchanNear   = min(ops.Nchan, 32);
-Nnearest    = min(ops.Nchan, 32);
+NchanNear   = min(ops.Nchan, rez.ops.nNeighbors);
+Nnearest    = min(ops.Nchan, rez.ops.nNeighbors);
 sigmaMask   = ops.sigmaMask;
 
 ik = 0;
@@ -48,8 +55,14 @@ while ik<Nfilt
     ss = rez.st3(isp,1)/ops.fs; % convert to seconds
 
     clp0 = rez.cProjPC(isp, :, :); % get the PC projections for these spikes
-    clp0 = gpuArray(clp0(:,:));
+    if useGPU
+        clp0 = gpuArray(clp0(:,:));
+    else
+        clp0 = clp0(:,:);
+    end
     clp = clp0 - mean(clp0,1); % mean center them
+
+    clp = clp - my_conv2(clp, 250, 1); % subtract a running average, because the projections are NOT drift corrected
 
     % now use two different ways to initialize the bimodal direction
     % the main script calls this function twice, and does both initializations
@@ -62,7 +75,11 @@ while ik<Nfilt
     end
 
     % initial projections of waveform PCs onto 1D vector
-    x = gather(clp * w);
+    if useGPU
+        x = gather(clp * w);
+    else
+        x = clp * w;
+    end
     s1 = var(x(x>mean(x))); % initialize estimates of variance for the first
     s2 = var(x(x<mean(x))); % and second gaussian in the mixture of 1D gaussians
 
@@ -100,15 +117,18 @@ while ik<Nfilt
             % we re-estimate w
             StS  = clp' * (clp .* (rs(:,1)/s1 + rs(:,2)/s2))/nSpikes; % these equations follow from the model
             StMu = clp' * (rs(:,1)*mu1/s1 + rs(:,2)*mu2/s2)/nSpikes;
-
-            w = StMu'/StS; % this is the new estimate of the best pursuit direection
+            w = StMu'/StS; % this is the new estimate of the best pursuit direection  
             w = normc(w'); % which we unit normalize
-            x = gather(clp * w);  % the new projections of the data onto this direction
+            if useGPU
+                x = gather(clp * w);  % the new projections of the data onto this direction
+            else
+                x = clp * w;
+            end
         end
     end
 
     ilow = rs(:,1)>rs(:,2); % these spikes are assigned to cluster 1
-    %    ps = mean(rs(:,1));
+%     ps = mean(rs(:,1));
     plow = mean(rs(ilow,1)); % the mean probability of spikes assigned to cluster 1
     phigh = mean(rs(~ilow,2)); % same for cluster 2
     nremove = min(mean(ilow), mean(~ilow)); % the smallest cluster has this proportion of all spikes
@@ -117,7 +137,7 @@ while ik<Nfilt
     % did this split fix the autocorrelograms?
     [K, Qi, Q00, Q01, rir] = ccg(ss(ilow), ss(~ilow), 500, dt); % compute the cross-correlogram between spikes in the putative new clusters
     Q12 = min(Qi/max(Q00, Q01)); % refractoriness metric 1
-    R = min(rir);                % refractoriness metric 2
+    R = min(rir); % refractoriness metric 2
 
     % if the CCG has a dip, don't do the split.
     % These thresholds are consistent with the ones from merges.

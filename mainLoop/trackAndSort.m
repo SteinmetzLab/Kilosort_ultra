@@ -39,8 +39,9 @@ NT  	= ops.NT;
 
 
 % two variables for the same thing? number of nearest channels to each primary channel
-NchanNear   = min(ops.Nchan, 32);
-Nnearest    = min(ops.Nchan, 32);
+
+NchanNear   = min(ops.Nchan, rez.ops.nNeighbors);
+Nnearest    = min(ops.Nchan, rez.ops.nNeighbors);
 
 % decay of gaussian spatial mask centered on a channel
 sigmaMask  = ops.sigmaMask;
@@ -75,7 +76,7 @@ Params     = double([NT Nfilt ops.Th(1) nInnerIter nt0 Nnearest ...
 nsp = gpuArray.zeros(Nfilt,1, 'double');
 
 % extract ALL features on the last pass
-Params(13) = 2; % this is a flag to output features (PC and template features)
+Params(13) = 2; % 0=> neither, 1 => PC features only; 2 => template and PC features
 
 % different threshold on last pass?
 Params(3) = ops.Th(end); % usually the threshold is much lower on the last pass
@@ -99,13 +100,18 @@ fid = fopen(ops.fproc, 'r');
 st3 = zeros(1e7, 5); % this holds spike times, clusters and other info per spike
 ntot = 0;
 
+% these next three store the low-d template decompositions
+if ~isfield(rez, 'WA') || isempty(rez.WA)
+    rez.WA = zeros(nt0, Nfilt, Nrank,nBatches,  'single');
+    rez.UA = zeros(Nchan, Nfilt, Nrank,nBatches,  'single');
+    rez.muA = zeros(Nfilt, nBatches,  'single');
+end
 
 % these ones store features per spike
 fW  = zeros(Nnearest, 1e7, 'single'); % Nnearest is the number of nearest templates to store features for
 fWpc = zeros(NchanNear, Nrank, 1e7, 'single'); % NchanNear is the number of nearest channels to take PC features from
 
 
-dWU1 = dWU;
 
 for ibatch = 1:niter    
     k = iorder(ibatch); % k is the index of the batch in absolute terms
@@ -113,10 +119,8 @@ for ibatch = 1:niter
     % loading a single batch (same as everywhere)
     offset = 2 * ops.Nchan*batchstart(k);
     fseek(fid, offset, 'bof');
-    dat = fread(fid, [ops.Nchan NT + ops.ntbuff], '*int16');
-    dat = dat';
+    dat = fread(fid, [NT ops.Nchan], '*int16');
     dataRAW = single(gpuArray(dat))/ ops.scaleproc;
-    Params(1) = size(dataRAW,1);
     
     % decompose dWU by svd of time and space (via covariance matrix of 61 by 61 samples)
     % this uses a "warm start" by remembering the W from the previous
@@ -129,7 +133,7 @@ for ibatch = 1:niter
     % such as when we subtract off a template
     [UtU, maskU] = getMeUtU(iW, iC, mask, Nnearest, Nchan); % this needs to change (but I don't know why!)
     
-    
+
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     
@@ -159,11 +163,12 @@ for ibatch = 1:niter
     % since some clusters have different number of spikes, we need to apply the
     % exp(pm) factor several times, and fexp is the resulting update factor
     % for each template
-
-    dWU1 = dWU1  + dWU0;
-    nsp = nsp + double(nsp0);
+    fexp = exp(double(nsp0).*log(pm));
+    fexp = reshape(fexp, 1,1,[]);
+    dWU = dWU .* fexp + (1-fexp) .* (dWU0./reshape(max(1, double(nsp0)), 1,1, []));
     
     % nsp just gets updated according to the fixed factor p1
+    nsp = nsp * p1 + (1-p1) * double(nsp0);
     
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     
@@ -172,9 +177,16 @@ for ibatch = 1:niter
     % we memorize the spatio-temporal decomposition of the waveforms at this batch
     % this is currently only used in the GUI to provide an accurate reconstruction
     % of the raw data at this time
-    
+    rez.WA(:,:,:,k) = gather(W);
+    rez.UA(:,:,:,k) = gather(U);
+    rez.muA(:,k) = gather(mu);
+        
     % we carefully assign the correct absolute times to spikes found in this batch
-    toff = nt0min + t0 + NT*(k-1);
+    ioffset         = ops.ntbuff;
+    if k==1
+        ioffset         = 0; % the first batch is special (no pre-buffer)
+    end
+    toff = nt0min + t0 -ioffset + (NT-ops.ntbuff)*(k-1);
     st = toff + double(st0);
     
     irange = ntot + [1:numel(x0)]; % spikes and features go into these indices
@@ -223,7 +235,6 @@ st3 = st3(1:ntot, :);
 fW = fW(:, 1:ntot);
 fWpc = fWpc(:,:, 1:ntot);
 
-rez.dWU = dWU1 ./ reshape(nsp, [1,1,Nfilt]);
 rez.nsp = nsp;
 
 %%
