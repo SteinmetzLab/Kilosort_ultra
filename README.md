@@ -1,7 +1,7 @@
 
 # Kilosort2: automated spike sorting with drift tracking and template matching on GPUs #
 
-### Modification: end user can input parameter nNeighbors in configutaion file 'configFile384.m'. ###
+### Modification: end user can input parameter nNeighbors in configutaion file 'configFile384.m'. Code tested by using 'main_kilosort.m'. ###
 ### User can set nNeighbors up to 96 for NP ultra probe, to take advantage of the high dense resolution of spike waveforms. ###
 
 ![](https://github.com/MouseLand/Kilosort2/blob/master/Docs/img/templates.png)
